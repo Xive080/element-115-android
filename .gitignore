@@ -1,0 +1,12 @@
+out/
+out_*/
+shots/
+*.apk
+*.idsig
+*.so
+*.o
+*.log
+*.png
+*.keystore
+*.bak*
+.DS_Store

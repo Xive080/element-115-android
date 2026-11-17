@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="app.bo1native">
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
+    <uses-feature android:glEsVersion="0x00030002" android:required="true" />
+    <application android:label="BO1 native" android:hasCode="false" android:extractNativeLibs="true" android:theme="@style/AppTheme">
+        <activity android:name="android.app.NativeActivity" android:exported="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|density|uiMode|layoutDirection"
+            android:screenOrientation="fullSensor" android:resizeableActivity="true"
+            android:showWhenLocked="true" android:turnScreenOn="true">
+            <meta-data android:name="android.app.lib_name" android:value="main" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
