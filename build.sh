@@ -15,7 +15,7 @@ OD=$H/harness2/out_app${BACKEND:+_$BACKEND}${OSUF:+_$OSUF}${H5G:+_h5}; GO=$OD/ob
 # escribio para la pila del hilo principal (8 MB en el Mac). Copia parcheada en la carpeta de salida (no se toca el NDK): 64 MB.
 sed 's/pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);/&\n    pthread_attr_setstacksize(\&attr, (size_t)'"${APP_STACK_MB:-64}"' << 20);/' $GLUE/android_native_app_glue.c > $GO/android_native_app_glue_big.c
 grep -q pthread_attr_setstacksize $GO/android_native_app_glue_big.c || { echo "FALLA parche de pila de la glue"; exit 1; }
-$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android26-clang -O1 -fPIC -I$GLUE -c $GO/android_native_app_glue_big.c -o $GO/android_native_app_glue.o
+$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android26-clang -O1 -fPIC -ffile-prefix-map=$(cd $A/.. && pwd)/= -ffile-prefix-map=$NDK/=ndk/ -I$GLUE -c $GO/android_native_app_glue_big.c -o $GO/android_native_app_glue.o
 APP=1 TARGET=ndk EXTRA_FL="-I$GLUE" EXTRA="$A/src/android_main.cpp" $H/harness2/build.sh
 O=${APK_OUT:-$A/out}; PREV=; [ -f $O/bo1native.apk ] && { PREV=$(mktemp); cp $O/bo1native.apk $PREV; }
 rm -rf $O; mkdir -p $O/lib/arm64-v8a $O/res; [ -n "$PREV" ] && mv $PREV $O/bo1native.apk.prev
