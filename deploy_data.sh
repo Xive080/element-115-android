@@ -1,7 +1,7 @@
 #!/bin/bash
 # deploy_data.sh (OLA 15A): copia al movil los DATOS que el APK no lleva (el APK solo trae libmain.so y recursos; ningun fichero del juego).
 #
-#   deploy_data.sh [--dry-run] [--push] [--cache] [--texpkg FICHERO] [--gamedata DIR]
+#   deploy_data.sh [--dry-run] [--push] [--cache] [--texpkg FICHERO] [--gamedata DIR] [--map ZONA]
 #
 #   --dry-run   (por defecto) solo dice que copiaria, de donde a donde y cuanto ocupa. No llama a adb.
 #   --push      copia de verdad con adb (FOLD=<serial>; por defecto el de fold.sh). Exige que adb YA vea el dispositivo: no fuerza la conexion.
@@ -9,9 +9,12 @@
 #   --cache     anade las caches portables del Mac: v9cache/pipelines.keys y v9_shaders.spvc (evitan el primer arranque frio del precompilado).
 #   --texpkg F  paquete de texturas ASTC (files/tex.pkg). Por defecto TEXPKG o, si no, ninguno (sin el, el backend cae a RGBA8: ~750 MB mas).
 #   --gamedata D carpeta de datos del juego del usuario (por defecto P3_GAMEDATA o native/gamedata, calculada desde este script).
+#   --map Z     (OLA 18) copia SOLO el mapa Z de native/gamedata_maps/Z (bo1maps.py fetch) a files/maps/Z (BO1_MAPS de la app):
+#               zone/, main/, localization.txt, playlists_sp.info, video/, h6a/, tex.pkg. Nada de players/ ni de la base.
 #
 # Destino (getExternalFilesDir de app.bo1native; android_main.cpp lo calcula en ejecucion):
-#   files/game/zone/**  files/game/main/*.iwd  files/game/players/*   <- datos del juego del usuario (NUNCA en el APK ni en git); players/* solo si NO existen en el movil
+#   files/game/zone/**  files/game/main/*.iwd                       <- datos del juego del usuario (NUNCA en el APK ni en git)
+#   files/game/players/*  NUNCA (OLA 18): son los ajustes del movil (config.cfg lo crea la app con el perfil de Android; bo1_map.txt el menu)
 #   files/game/h6a/wma_adpcm.pak                                    <- sonido convertido (h0/harness2/h6a_pak.sh build)
 #   files/tex.pkg                                                   <- texturas ASTC (texcache_build)
 #   files/v9cache/pipelines.keys, files/v9_shaders.spvc              <- solo con --cache
@@ -21,20 +24,27 @@ DRY=1; CACHE=; GD=${P3_GAMEDATA:-$NAT/gamedata}; PKG=${TEXPKG:-}
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;; --push) DRY= ;; --cache) CACHE=1 ;;
-    --texpkg) PKG=$2; shift ;; --gamedata) GD=$2; shift ;;
+    --texpkg) PKG=$2; shift ;; --gamedata) GD=$2; shift ;; --map) MAP=$2; shift ;;
     -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) echo "deploy_data: opcion desconocida $1"; exit 1 ;;
   esac; shift
 done
 APPD=/sdcard/Android/data/app.bo1native/files
-[ -d "$GD/zone" ] && [ -d "$GD/main" ] || { echo "deploy_data: $GD no tiene zone/ y main/ (datos del juego del usuario)"; exit 1; }
-# lista "origen|destino"
 L=()
-while IFS= read -r f; do L+=("$f|$APPD/game/${f#$GD/}"); done < <(find "$GD/zone" "$GD/main" "$GD/players" -type f 2>/dev/null | sort)
+if [ -n "$MAP" ]; then   # OLA 18: un mapa de gamedata_maps -> files/maps/<zona>; sin base, sin players/, sin borrar nada
+  MD=$NAT/gamedata_maps/$MAP; [ -d "$MD/zone" ] || { echo "deploy_data: no hay $MD/zone (bo1maps.py fetch $MAP)"; exit 1; }
+  while IFS= read -r f; do L+=("$f|$APPD/maps/$MAP/${f#$MD/}"); done < <(cd "$MD" && find -L "$MD/zone" "$MD/main" "$MD/video" "$MD/h6a" "$MD/localization.txt" "$MD/playlists_sp.info" "$MD/tex.pkg" -type f 2>/dev/null | sort)
+  GD=; PKG=; CACHE=
+fi
+if [ -z "$MAP" ]; then [ -d "$GD/zone" ] && [ -d "$GD/main" ] || { echo "deploy_data: $GD no tiene zone/ y main/ (datos del juego del usuario)"; exit 1; }; fi
+# lista "origen|destino"
+if [ -z "$MAP" ]; then
+while IFS= read -r f; do L+=("$f|$APPD/game/${f#$GD/}"); done < <(find "$GD/zone" "$GD/main" -type f 2>/dev/null | sort)   # OLA 18: sin players/ (antes, si faltaba en el movil, copiaba el config.cfg del Mac)
 if [ -f "$GD/h6a/wma_adpcm.pak" ]; then L+=("$GD/h6a/wma_adpcm.pak|$APPD/game/h6a/wma_adpcm.pak")
 else echo "deploy_data: AVISO sin $GD/h6a/wma_adpcm.pak (sin sonido de armas/musica; generalo con h0/harness2/h6a_pak.sh build)"; fi
 if [ -n "$PKG" ]; then [ -f "$PKG" ] || { echo "deploy_data: no existe $PKG"; exit 1; }; L+=("$PKG|$APPD/tex.pkg")
 else echo "deploy_data: AVISO sin paquete de texturas (--texpkg): en el movil las texturas iran en RGBA8 (mucha mas memoria)"; fi
+fi
 if [ -n "$CACHE" ]; then
   K=$NAT/h0/v9cache/pipelines.keys; S=$NAT/h0/v9_shaders.spvc
   [ -f "$K" ] && L+=("$K|$APPD/v9cache/pipelines.keys") || echo "deploy_data: AVISO sin $K"
@@ -57,7 +67,7 @@ for e in "${L[@]}"; do
   src=${e%%|*}; dst=${e#*|}; ls_=$(SZ "$src")
   rs=$(adb -s "$FOLD" shell stat -c %s "$dst" 2>/dev/null | tr -d '\r' || true)
   # OLA 16: players/* son los ajustes del jugador EN EL MOVIL (los escribe la app): si ya existen no se pisan con los del Mac
-  case "$dst" in */game/players/*) [ -n "$rs" ] && { echo "  se respeta (ajustes del movil)  $dst"; continue; } ;; esac
+  case "$dst" in */players/*) echo "  NUNCA se copia (ajustes del movil)  $dst"; continue ;; esac   # OLA 18: defensa extra
   if [ "$rs" = "$ls_" ] && [ "$(adb -s "$FOLD" shell md5sum "$dst" | cut -d' ' -f1)" = "$(M5 "$src")" ]; then echo "  igual  $dst"; continue; fi
   adb -s "$FOLD" shell mkdir -p "$(dirname "$dst")"; adb -s "$FOLD" push "$src" "$dst" >/dev/null
   rs=$(adb -s "$FOLD" shell stat -c %s "$dst" | tr -d '\r'); rm5=$(adb -s "$FOLD" shell md5sum "$dst" | cut -d' ' -f1)

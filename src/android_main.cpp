@@ -576,19 +576,25 @@ void android_main(android_app *app)
         std::string cd = std::string(ext) + "/v9cache"; mkdir(cd.c_str(), 0755);
         setenv("V9_CACHE_DIR", cd.c_str(), 0); setenv("V9_SHADERCACHE", (std::string(ext) + "/v9_shaders.spvc").c_str(), 0);
         std::string pk = std::string(ext) + "/tex.pkg"; if (access(pk.c_str(), R_OK) == 0) setenv("V9_TEXPKG", pk.c_str(), 0);
-        setenv("V9_VALIDATE", "0", 0); setenv("V9_MAXTEX", "512", 0); setenv("V9_MAX_MB", "640", 0);   /* OLA 7g: picmip 0 + mips altos + ASTC (medido en Mac 365 MB, pico 418) */ setenv("V9_RESMAX_MB", "64", 0); setenv("MG_RSS_MAX_MB", "1500", 0);
+        setenv("V9_VALIDATE", "0", 0); setenv("V9_MAXTEX", "512", 0); setenv("V9_MAX_MB", "1024", 0);   /* OLA 7g: 640 (picmip 0 + mips altos + ASTC); OLA 18: 1024 (Alto con texturas de 1024, medido en el Fold) */ setenv("V9_RESMAX_MB", "64", 0);
+        setenv("MG_RSS_MAX_MB", "3072", 0);   // OLA 18: techo duro de VmRSS 3 GB (objetivo 2 GB y MemAvailable con presion: memguard.cpp)
     }
     char prop[PROP_VALUE_MAX] = ""; if (__system_property_get("debug.bo1.novsync", prop) > 0 && prop[0] == '1') setenv("P6_NOVSYNC", "1", 1);
     // OLA 16: debug.bo1.env="VAR=v;VAR=v" pone variables de prueba sin recompilar (H15_MEMPROFILE=1, H9_SHADOW=0...). Las guardas de memoria
-    // (MG_RSS_MAX_MB, V9_MAX_MB, V9_RESMAX_MB) NO se pueden aflojar por aqui. Vacio o " " = nada.
-    if (__system_property_get("debug.bo1.env", prop) > 0 && prop[0] && prop[0] != ' ') {
+    // (MG_RSS_MAX_MB, MG_RSS_SOFT_MB, V9_MAX_MB, V9_RESMAX_MB) NO se pueden aflojar por aqui: OLA 18, solo apretar (un valor MENOR que el
+    // vigente se acepta; las de MemAvailable, MG_AVAIL_*, las filtra memguard y solo puede subirlas). Vacio o " " = nada.
+    for (const char *pn : { "debug.bo1.env", "debug.bo1.env2" })   // OLA 18: env2 sigue a env (una propiedad admite solo 91 caracteres)
+    if (__system_property_get(pn, prop) > 0 && prop[0] && prop[0] != ' ') {
         std::string all(prop); size_t i = 0;
         while (i < all.size()) {
             size_t e = all.find(';', i); if (e == std::string::npos) e = all.size();
             std::string kv = all.substr(i, e - i); i = e + 1; size_t q = kv.find('=');
             if (q == std::string::npos || q == 0) continue;
             std::string k = kv.substr(0, q), v = kv.substr(q + 1);
-            if (k == "MG_RSS_MAX_MB" || k == "V9_MAX_MB" || k == "V9_RESMAX_MB") { LOG("debug.bo1.env: %s es una guarda, se ignora", k.c_str()); continue; }
+            if (k == "MG_RSS_MAX_MB" || k == "MG_RSS_SOFT_MB" || k == "V9_MAX_MB" || k == "V9_RESMAX_MB") {
+                const char *cur = getenv(k.c_str()); const long nv = atol(v.c_str());
+                if (!cur || nv <= 0 || nv >= atol(cur)) { LOG("debug.bo1.env: %s=%s es una guarda y no la aprieta (vigente %s), se ignora", k.c_str(), v.c_str(), cur ? cur : "-"); continue; }
+            }
             setenv(k.c_str(), v.c_str(), 1); LOG("debug.bo1.env: %s=%s", k.c_str(), v.c_str());
         }
     }
