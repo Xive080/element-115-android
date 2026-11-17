@@ -11,7 +11,7 @@
 cd "$(dirname "$0")"
 T=${1:-h10t}; SAFE=$2; A="adb -s ${FOLD:-SERIAL_DEL_DISPOSITIVO}"; O=out_fold; mkdir -p $O
 $A shell true || { echo "ADB NO RESPONDE"; exit 2; }
-$A shell setprop debug.bo1.h10 1; $A shell setprop debug.bo1.h10safe "${SAFE:- }"
+$A shell setprop debug.bo1.h10 1; $A shell "setprop debug.bo1.h10safe '${SAFE}'"   # OLA 16: comillas dentro del shell remoto (" " se perdia y setprop fallaba)
 SHOT= ./run_h5_fold.sh 0 120 "$T" > $O/run_$T.txt 2>&1 &
 RUN=$!
 sleep ${WAIT:-40}   # carga del mapa (ola 5: ~25-35 s en el Fold)
@@ -34,7 +34,7 @@ $A shell input keyevent BACK; sleep 1.2; shot 7_atras             # BACK del sis
 tap 0.54 0.923; shot 8_back_tactil                                # boton Back tactil (si sigue en ajustes)
 $A shell input keyevent BACK; sleep 1.2; shot 9_cerrado          # vuelve a la partida
 wait $RUN
-$A shell setprop debug.bo1.h10 0; $A shell setprop debug.bo1.h10safe " "
+$A shell setprop debug.bo1.h10 0; $A shell "setprop debug.bo1.h10safe \"\""
 echo "== OLA 10 ($T)"
 grep -aE "\[H10\] (zona segura|tactil: filas|abre|dedo|valor suelto|perfil|menu arriba|mando|fps )" $O/log_$T.txt | head -60
 ls $O/shot_${T}_*.png 2>/dev/null

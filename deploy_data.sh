@@ -11,7 +11,7 @@
 #   --gamedata D carpeta de datos del juego del usuario (por defecto P3_GAMEDATA o native/gamedata, calculada desde este script).
 #
 # Destino (getExternalFilesDir de app.bo1native; android_main.cpp lo calcula en ejecucion):
-#   files/game/zone/**  files/game/main/*.iwd  files/game/players/*   <- datos del juego del usuario (NUNCA en el APK ni en git)
+#   files/game/zone/**  files/game/main/*.iwd  files/game/players/*   <- datos del juego del usuario (NUNCA en el APK ni en git); players/* solo si NO existen en el movil
 #   files/game/h6a/wma_adpcm.pak                                    <- sonido convertido (h0/harness2/h6a_pak.sh build)
 #   files/tex.pkg                                                   <- texturas ASTC (texcache_build)
 #   files/v9cache/pipelines.keys, files/v9_shaders.spvc              <- solo con --cache
@@ -56,6 +56,8 @@ free=$(adb -s "$FOLD" shell df -k /sdcard | tail -1 | awk '{print $4}' | tr -d '
 for e in "${L[@]}"; do
   src=${e%%|*}; dst=${e#*|}; ls_=$(SZ "$src")
   rs=$(adb -s "$FOLD" shell stat -c %s "$dst" 2>/dev/null | tr -d '\r' || true)
+  # OLA 16: players/* son los ajustes del jugador EN EL MOVIL (los escribe la app): si ya existen no se pisan con los del Mac
+  case "$dst" in */game/players/*) [ -n "$rs" ] && { echo "  se respeta (ajustes del movil)  $dst"; continue; } ;; esac
   if [ "$rs" = "$ls_" ] && [ "$(adb -s "$FOLD" shell md5sum "$dst" | cut -d' ' -f1)" = "$(M5 "$src")" ]; then echo "  igual  $dst"; continue; fi
   adb -s "$FOLD" shell mkdir -p "$(dirname "$dst")"; adb -s "$FOLD" push "$src" "$dst" >/dev/null
   rs=$(adb -s "$FOLD" shell stat -c %s "$dst" | tr -d '\r'); rm5=$(adb -s "$FOLD" shell md5sum "$dst" | cut -d' ' -f1)

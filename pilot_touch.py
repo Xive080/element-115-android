@@ -30,16 +30,16 @@ YAW_RATE_DS = 170.0     # grados/s con el analogico derecho a tope (H5App_Input,
 LOOK_DEG_PER_PX = 0.12  # apaisado: arrastre de la mitad derecha (g_lookDX * 0.12)
 
 # kBtns de android_main.cpp: (fx, fy, fr) en DS (fraccion de la region de controles, radio por ancho) y (lx, ly, lr) en apaisado
-BTNS = {
-    "FUEGO":    (0.92, 0.17, 0.062, 0.90, 0.60, 0.045),
-    "APUNTAR":  (0.08, 0.17, 0.055, 0.78, 0.45, 0.034),
-    "RECARGA":  (0.66, 0.17, 0.048, 0.78, 0.75, 0.030),
-    "USAR":     (0.50, 0.42, 0.060, 0.66, 0.88, 0.030),
-    "CUCHILLO": (0.79, 0.17, 0.045, 0.96, 0.40, 0.026),
-    "SALTO":    (0.36, 0.17, 0.048, 0.95, 0.83, 0.026),
-    "AGACHAR":  (0.22, 0.17, 0.048, 0.86, 0.89, 0.026),
-    "ARMA":     (0.50, 0.80, 0.050, 0.96, 0.15, 0.024),
-    "MENU":     (0.50, 0.07, 0.032, 0.50, 0.06, 0.020),
+BTNS = {   # OLA 16: (lx, ly, lr) de la disposicion apaisada de la OLA 15E (anclada a la zona segura derecha, en unidades de alto)
+    "FUEGO":    (0.92, 0.17, 0.062, 0.17, 0.52, 0.080),
+    "APUNTAR":  (0.08, 0.17, 0.055, 0.40, 0.42, 0.060),
+    "RECARGA":  (0.66, 0.17, 0.048, 0.40, 0.60, 0.053),
+    "USAR":     (0.50, 0.42, 0.060, 0.62, 0.76, 0.055),
+    "CUCHILLO": (0.79, 0.17, 0.045, 0.07, 0.34, 0.046),
+    "SALTO":    (0.36, 0.17, 0.048, 0.46, 0.87, 0.050),
+    "AGACHAR":  (0.22, 0.17, 0.048, 0.29, 0.66, 0.046),
+    "ARMA":     (0.50, 0.80, 0.050, 0.07, 0.15, 0.043),
+    "MENU":     (0.50, 0.07, 0.032, -1.00, 0.06, 0.036),
 }
 STICK_FX, STICK_FY, STICK_FR = (0.20, 0.80), (0.62, 0.62), 0.11
 HIT_DS, HIT_LAND = 1.25, 1.35   # DsTouchDown / LandTouchDown: radio de pulsacion = r * factor
@@ -91,6 +91,7 @@ class Geo:
         if self.W <= 0 or self.H <= 0: raise Abort("marco de ventana invalido: %s" % wf.strip())
         self.ds = min(self.W, self.H) >= 1500 and self.H > self.W   # android_main.cpp: g_ds
         self.layout = "DS (controles abajo)" if self.ds else "apaisado (botones sobre el juego)"
+        self.safe_px = (0, 0, 0, 0)   # zona segura (izq, arriba, der, abajo) en px; la pone run() con la linea "[H10] zona segura" del log
     def safe(self, x, y):
         return MARGIN <= x <= self.sw - MARGIN and MARGIN_TOP <= y <= self.sh - MARGIN_BOT
     def _pick(self, cx, cy, hit):
@@ -109,15 +110,16 @@ class Geo:
         if self.ds:
             ry0, rh = self.H // 2, self.H - self.H // 2
             cx, cy, hit = self.x0 + fx * self.W, self.y0 + ry0 + fy * rh, fr * self.W * HIT_DS
-        else:
-            cx, cy, hit = self.x0 + lx * self.W, self.y0 + ly * self.H, lr * self.W * HIT_LAND
+        else:   # LandLayoutPx (android_main.cpp, OLA 15E): x desde el borde seguro derecho en unidades de alto, y dentro del alto seguro
+            W, H = self.W, self.H; sR, sT, sB = max(0.015 * H, self.safe_px[2]), max(0.015 * H, self.safe_px[1]), max(0.015 * H, self.safe_px[3])
+            cx = self.x0 + (W * 0.5 if lx < 0 else W - sR - lx * H); cy = self.y0 + sT + ly * (H - sT - sB); hit = lr * H * HIT_LAND
         return self._pick(cx, cy, hit)
     def stick(self, k):   # DS: centro y radio del analogico k (0 izq, 1 der)
         ry0, rh = self.H // 2, self.H - self.H // 2
         return self.x0 + STICK_FX[k] * self.W, self.y0 + ry0 + STICK_FY[k] * rh, STICK_FR * self.W
     def land_move_origin(self):   # apaisado: joystick flotante en la mitad izquierda, lejos de botones y bordes
         return int(self.x0 + 0.25 * self.W), int(self.y0 + 0.55 * self.H)
-    def land_look_origin(self):   # apaisado: arrastre en la mitad derecha, entre botones (APUNTAR 0.78/0.45, FUEGO 0.90/0.60)
+    def land_look_origin(self):   # apaisado: arrastre en la mitad derecha, por encima de USAR y a la izquierda de APUNTAR (disposicion 15E)
         return int(self.x0 + 0.62 * self.W), int(self.y0 + 0.30 * self.H)
 
 # ---------------------------------------------------------------- piloto
@@ -180,6 +182,12 @@ def act(p, m, last_reload):
 
 def run(dev, log, secs, verbose=True):
     g = Geo(dev); p = Pilot(dev, g)
+    try:   # OLA 16: zona segura real que usa la app (la ultima "[H10] zona segura: izq L arriba T der R abajo B px en WxH" del log)
+        zs = re.findall(r"\[H10\] zona segura: izq (\d+) arriba (\d+) der (\d+) abajo (\d+) px en (\d+)x(\d+)", open(log, errors="replace").read())
+        zs = [z for z in zs if (int(z[4]), int(z[5])) == (g.W, g.H)]
+        if zs: g.safe_px = tuple(int(v) for v in zs[-1][:4])
+    except OSError: pass
+    print("zona segura de la app (px): %s" % (g.safe_px,), flush=True)
     print("pantalla %dx%d rotacion %d, ventana %dx%d en (%d,%d): %s; margen %d px (arriba %d)" % (g.sw, g.sh, g.rot, g.W, g.H, g.x0, g.y0, g.layout, MARGIN, MARGIN_TOP), flush=True)
     for b in BTNS: print("  %-9s -> %s" % (b, g.button(b) or "FUERA (en el margen: no se usa)"))
     p.guard()

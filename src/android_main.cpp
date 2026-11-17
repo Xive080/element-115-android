@@ -507,6 +507,17 @@ void android_main(android_app *app)
     ANativeActivity_setWindowFlags(app->activity, AWINDOW_FLAG_FULLSCREEN | AWINDOW_FLAG_KEEP_SCREEN_ON, 0);
     // esperar la ventana
     while (!app->window) PumpEvents(true);
+    {   // OLA 16: en la pantalla EXTERIOR (lado corto < 1500 px) ApplyOrientation pide horizontal, pero la primera ventana llega en vertical
+        // (1080x2092) y el giro tarda ~2,5 s: el motor arrancaba en vertical, CheckSurface veia otro aspecto y reiniciaba el proceso (a veces
+        // en bucle, y cada carga doble disparaba el pico de memoria). Se espera aqui al giro, como mucho 4 s; si no llega, se sigue como antes.
+        const double t0 = NowMs(); bool waited = false;
+        for (;;) {
+            if (!app->window) { PumpEvents(true); continue; }
+            const int w = ANativeWindow_getWidth(app->window), h = ANativeWindow_getHeight(app->window);
+            if (!(w < h && w < 1500) || NowMs() - t0 > 4000) { if (waited) LOG("exterior: ventana %dx%d tras esperar el giro %.0f ms", w, h, NowMs() - t0); break; }
+            waited = true; PumpEvents(false); usleep(16000);
+        }
+    }
     g_haveWin = true; g_resumed = true;
     // datos del juego: <getExternalFilesDir>/game con zone/ y main/*.iwd (nunca dentro del APK ni rutas fijas)
     const char *ext = app->activity->externalDataPath ? app->activity->externalDataPath : app->activity->internalDataPath;
@@ -518,6 +529,19 @@ void android_main(android_app *app)
         setenv("V9_VALIDATE", "0", 0); setenv("V9_MAXTEX", "512", 0); setenv("V9_MAX_MB", "640", 0);   /* OLA 7g: picmip 0 + mips altos + ASTC (medido en Mac 365 MB, pico 418) */ setenv("V9_RESMAX_MB", "64", 0); setenv("MG_RSS_MAX_MB", "1500", 0);
     }
     char prop[PROP_VALUE_MAX] = ""; if (__system_property_get("debug.bo1.novsync", prop) > 0 && prop[0] == '1') setenv("P6_NOVSYNC", "1", 1);
+    // OLA 16: debug.bo1.env="VAR=v;VAR=v" pone variables de prueba sin recompilar (H15_MEMPROFILE=1, H9_SHADOW=0...). Las guardas de memoria
+    // (MG_RSS_MAX_MB, V9_MAX_MB, V9_RESMAX_MB) NO se pueden aflojar por aqui. Vacio o " " = nada.
+    if (__system_property_get("debug.bo1.env", prop) > 0 && prop[0] && prop[0] != ' ') {
+        std::string all(prop); size_t i = 0;
+        while (i < all.size()) {
+            size_t e = all.find(';', i); if (e == std::string::npos) e = all.size();
+            std::string kv = all.substr(i, e - i); i = e + 1; size_t q = kv.find('=');
+            if (q == std::string::npos || q == 0) continue;
+            std::string k = kv.substr(0, q), v = kv.substr(q + 1);
+            if (k == "MG_RSS_MAX_MB" || k == "V9_MAX_MB" || k == "V9_RESMAX_MB") { LOG("debug.bo1.env: %s es una guarda, se ignora", k.c_str()); continue; }
+            setenv(k.c_str(), v.c_str(), 1); LOG("debug.bo1.env: %s=%s", k.c_str(), v.c_str());
+        }
+    }
     if (__system_property_get("debug.bo1.snd", prop) > 0 && prop[0] == '0') setenv("H6A", "0", 1);   // OLA 14: sonido por defecto; debug.bo1.snd=0 lo quita (H6A=0)
     if (__system_property_get("debug.bo1.menu", prop) > 0 && prop[0]) setenv("BO1_MENU", prop, 1);
     else setenv("P4_MAP", "zombie_pentagon", 0);   // por defecto: mapa 3D (H4); debug.bo1.menu=<menu> fuerza el modo menu 2D
