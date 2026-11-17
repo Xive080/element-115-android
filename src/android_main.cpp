@@ -570,6 +570,8 @@ void android_main(android_app *app)
     // datos del juego: <getExternalFilesDir>/game con zone/ y main/*.iwd (nunca dentro del APK ni rutas fijas)
     const char *ext = app->activity->externalDataPath ? app->activity->externalDataPath : app->activity->internalDataPath;
     std::string gd = std::string(ext) + "/game"; setenv("P3_GAMEDATA", gd.c_str(), 1); setenv("P3_TRACE", "off", 1);
+    // OLA M0: mapas aparte en <ext>/maps/<zona> (bo1maps.py fetch / deploy por mapa); el motor (h18_maps) elige carpeta, tex.pkg y config
+    setenv("BO1_MAPS", (std::string(ext) + "/maps").c_str(), 0);
     {   // backend Vulkan (solo lo leen las libv9; inofensivo con GLES): cachés y paquete de texturas junto a los datos, topes del backend
         std::string cd = std::string(ext) + "/v9cache"; mkdir(cd.c_str(), 0755);
         setenv("V9_CACHE_DIR", cd.c_str(), 0); setenv("V9_SHADERCACHE", (std::string(ext) + "/v9_shaders.spvc").c_str(), 0);
@@ -592,14 +594,14 @@ void android_main(android_app *app)
     }
     if (__system_property_get("debug.bo1.snd", prop) > 0 && prop[0] == '0') setenv("H6A", "0", 1);   // OLA 14: sonido por defecto; debug.bo1.snd=0 lo quita (H6A=0)
     if (__system_property_get("debug.bo1.menu", prop) > 0 && prop[0]) setenv("BO1_MENU", prop, 1);
-    else setenv("P4_MAP", "zombie_pentagon", 0);   // por defecto: mapa 3D (H4); debug.bo1.menu=<menu> fuerza el modo menu 2D
+    else setenv("P4_MAP", "auto", 1);   // por defecto: mapa 3D (H4) elegido por el motor (selector de mapas o Five); debug.bo1.menu=<menu> fuerza el modo menu 2D
     if (__system_property_get("debug.bo1.map", prop) > 0 && prop[0]) setenv("P4_MAP", prop, 1);
     // OLA 5: juego completo (servidor + GSC + cgame minimo) si el build lo trae; debug.bo1.h5=0 vuelve a la camara de H4.
     // debug.bo1.frames=N limita la partida a N frames de render (pruebas por pasos 1 -> 30 -> 600) y luego la app sale.
     g_h5Game = &g_h5pInputProvider != nullptr && !getenv("BO1_MENU") && !(__system_property_get("debug.bo1.h5", prop) > 0 && prop[0] == '0');
     if (g_h5Game) {
         setenv("H5_GAME", "1", 1); setenv("H5_PLAY", "1", 1); setenv("H5_VIEW", "1", 1); setenv("H5_PLAY_SCRIPT", "0", 1); setenv("H5_PLAY_SHOT", "0", 1);
-        setenv("H5_PLAY_SECONDS", "86400", 1); setenv("H5_MAP", getenv("P4_MAP") ? getenv("P4_MAP") : "zombie_pentagon", 1);
+        setenv("H5_PLAY_SECONDS", "86400", 1); setenv("H5_MAP", getenv("P4_MAP") ? getenv("P4_MAP") : "auto", 1);   // "auto": h18_maps (bo1_map.txt del menu o el mapa por defecto)
         if (__system_property_get("debug.bo1.frames", prop) > 0 && atoi(prop) > 0) setenv("H5_PLAY_FRAMES", prop, 1);
         // tope de skinning en CPU: actores a mas de 3000 u o fuera del cono de vision no se deforman ni dibujan (debug.bo1.skin=0 lo quita)
         if (!(__system_property_get("debug.bo1.skin", prop) > 0 && prop[0] == '0')) { setenv("H5_SKIN_MAXDIST", "3000", 0); setenv("H5_SKIN_CULL", "1", 0); }
