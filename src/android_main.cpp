@@ -141,6 +141,54 @@ static void H10ReadSafe(ANativeActivity *a)
 }
 static double g_safeAt;   // tras un giro/plegado los insets nuevos llegan un poco despues: se releen a los 400 ms
 
+// OLA 17: bateria del movil para el HUD (h13_batt.cpp dibuja g_h13Batt = nivel | cargando << 8; -1 = sin dato). Un hilo propio, enganchado
+// a la JVM, la lee cada 30 s: nada en el bucle de frames. Fuente: el intent pegajoso ACTION_BATTERY_CHANGED (registerReceiver con receptor
+// nulo: level/scale, plugged y status, lo mismo que `dumpsys battery`); si falla, BatteryManager (CAPACITY + isCharging, API 23).
+// Rayo = enchufado (plugged != 0) o cargando, como la barra de estado (sigue con carga adaptativa o al 100 %).
+extern int g_h13Batt __attribute__((weak));
+static bool BattIntent(JNIEnv *e, jobject act, int *pct, bool *chg)
+{
+    jclass cf = e->FindClass("android/content/IntentFilter"); if (Exc(e) || !cf) return false;
+    jstring act_s = e->NewStringUTF("android.intent.action.BATTERY_CHANGED");
+    jobject f = e->NewObject(cf, e->GetMethodID(cf, "<init>", "(Ljava/lang/String;)V"), act_s); if (Exc(e) || !f) return false;
+    jmethodID rr = e->GetMethodID(e->GetObjectClass(act), "registerReceiver", "(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;)Landroid/content/Intent;"); if (Exc(e) || !rr) return false;
+    jobject it = e->CallObjectMethod(act, rr, (jobject) nullptr, f); if (Exc(e) || !it) return false;
+    jmethodID gi = e->GetMethodID(e->GetObjectClass(it), "getIntExtra", "(Ljava/lang/String;I)I"); if (Exc(e) || !gi) return false;
+    auto Get = [&](const char *k) { jstring s = e->NewStringUTF(k); int v = e->CallIntMethod(it, gi, s, -1); if (Exc(e)) v = -1; e->DeleteLocalRef(s); return v; };
+    const int level = Get("level"), scale = Get("scale"), plugged = Get("plugged"), status = Get("status");
+    if (level < 0 || scale <= 0) return false;
+    *pct = (int)lroundf(100.0f * level / scale); *chg = plugged > 0 || status == 2 /* BATTERY_STATUS_CHARGING */;
+    return true;
+}
+static bool BattManager(JNIEnv *e, jobject act, int *pct, bool *chg)
+{
+    jmethodID gs = e->GetMethodID(e->GetObjectClass(act), "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;"); if (Exc(e) || !gs) return false;
+    jstring n = e->NewStringUTF("batterymanager"); jobject bm = e->CallObjectMethod(act, gs, n); if (Exc(e) || !bm) return false;
+    jclass cb = e->GetObjectClass(bm);
+    jmethodID mp = e->GetMethodID(cb, "getIntProperty", "(I)I"); if (Exc(e) || !mp) return false;
+    const int p = e->CallIntMethod(bm, mp, 4 /* BATTERY_PROPERTY_CAPACITY */); if (Exc(e) || p < 0 || p > 100) return false;
+    jmethodID mc = e->GetMethodID(cb, "isCharging", "()Z"); bool c = false; if (!Exc(e) && mc) { c = e->CallBooleanMethod(bm, mc); if (Exc(e)) c = false; }
+    *pct = p; *chg = c; return true;
+}
+static void *BattThread(void *)
+{
+    JavaVM *vm = g_app->activity->vm; JNIEnv *e; JavaVMAttachArgs aa = { JNI_VERSION_1_6, "bo1-bateria", nullptr };
+    if (vm->AttachCurrentThread(&e, &aa) != 0) { LOG("bateria: sin JNI en el hilo"); return nullptr; }
+    int last = -2;
+    for (;;) {
+        int pct = -1; bool chg = false; const char *src = "intent";
+        if (e->PushLocalFrame(32) == 0) {
+            if (!BattIntent(e, g_app->activity->clazz, &pct, &chg)) { src = "BatteryManager"; pct = -1; if (!BattManager(e, g_app->activity->clazz, &pct, &chg)) pct = -1; }
+            e->PopLocalFrame(nullptr);
+        }
+        const int v = pct >= 0 ? (pct > 100 ? 100 : pct) | (chg ? 256 : 0) : -1;
+        __atomic_store_n(&g_h13Batt, v, __ATOMIC_RELAXED);
+        if (v != last) { last = v; if (v >= 0) LOG("bateria: %d%%%s (%s)", v & 255, chg ? " cargando" : "", src); else LOG("bateria: sin dato"); }
+        sleep(30);
+    }
+    return nullptr;
+}
+
 // Orientacion segun pantalla: exterior (lado corto < 1500 px) = siempre horizontal; interior (abierto) = libre, vertical u horizontal.
 static void ApplyOrientation(android_app *app)
 {
@@ -574,6 +622,7 @@ void android_main(android_app *app)
     if (__system_property_get("debug.bo1.ds", prop) > 0 && prop[0] == '0') g_ds = false;   // pruebas: pantalla completa con los botones sobre el juego
     if (g_ds) g9::SetDsMode(true);
     H10ReadSafe(app->activity);                               // OLA 10: zona segura de los menus (necesita g_winW/H y g_ds)
+    if (&g_h13Batt) { pthread_t th; if (pthread_create(&th, nullptr, BattThread, nullptr) == 0) pthread_detach(th); }   // OLA 17: bateria para el HUD
     if (&g_h10Dpi) { const int d = AConfiguration_getDensity(app->config); g_h10Dpi = d > 0 && d < 0xfffe ? (float)d : 0; LOG("densidad %d dpi", d); }
     g_engW = g_winW; g_engH = g_ds ? g_winH / 2 : g_winH; g_t0 = NowMs();
     if (g_ds) LOG("modo DS: juego %dx%d arriba, controles abajo", g_engW, g_engH);
