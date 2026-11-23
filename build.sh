@@ -1,5 +1,6 @@
 #!/bin/bash
-# P6: construye el APK nativo (sin Gradle ni Java: NativeActivity + aapt2 + apksigner).
+# P6: construye el APK nativo (sin Gradle: NativeActivity + aapt2 + apksigner). OLA U2b: una sola clase Java (java/app/bo1native/Ime.java,
+# teclado en pantalla) compilada con javac + d8 a classes.dex; la actividad sigue siendo android.app.NativeActivity.
 # Uso: nativeapp/build.sh [install]     Salida: nativeapp/out/bo1native.apk     (OPT=-O2 para optimizar; por defecto -O0 como el harness)
 set -e
 cd "$(dirname "$0")"; A=$PWD; H=$A/../h0; SDK=~/Library/Android/sdk; NDK=$SDK/ndk/28.2.13676358; BT=$SDK/build-tools/35.0.0
@@ -16,14 +17,18 @@ OD=$H/harness2/out_app${BACKEND:+_$BACKEND}${OSUF:+_$OSUF}${H5G:+_h5}; GO=$OD/ob
 sed 's/pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);/&\n    pthread_attr_setstacksize(\&attr, (size_t)'"${APP_STACK_MB:-64}"' << 20);/' $GLUE/android_native_app_glue.c > $GO/android_native_app_glue_big.c
 grep -q pthread_attr_setstacksize $GO/android_native_app_glue_big.c || { echo "FALLA parche de pila de la glue"; exit 1; }
 $NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android26-clang -O1 -fPIC -ffile-prefix-map=$(cd $A/.. && pwd)/= -ffile-prefix-map=$NDK/=ndk/ -I$GLUE -c $GO/android_native_app_glue_big.c -o $GO/android_native_app_glue.o
-APP=1 TARGET=ndk EXTRA_FL="-I$GLUE" EXTRA="$A/src/android_main.cpp" $H/harness2/build.sh
+APP=1 TARGET=ndk EXTRA_FL="-I$GLUE" EXTRA="$A/src/android_main.cpp $A/src/ime_android.cpp" $H/harness2/build.sh
 O=${APK_OUT:-$A/out}; PREV=; [ -f $O/bo1native.apk ] && { PREV=$(mktemp); cp $O/bo1native.apk $PREV; }
 rm -rf $O; mkdir -p $O/lib/arm64-v8a $O/res; [ -n "$PREV" ] && mv $PREV $O/bo1native.apk.prev
 cp $OD/libmain.so $O/lib/arm64-v8a/libmain.so
 $NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-strip --strip-unneeded $O/lib/arm64-v8a/libmain.so 2>/dev/null || true
+# OLA U2b: classes.dex con app.bo1native.Ime (javac contra android.jar, Java 8 como bytecode; d8 lo pasa a dex con min-api 26)
+mkdir -p $O/jcls $O/dex
+javac -Xlint:-options -source 8 -target 8 -bootclasspath $SDK/platforms/android-35/android.jar -d $O/jcls $(find $A/java -name '*.java')
+$BT/d8 --release --min-api 26 --lib $SDK/platforms/android-35/android.jar --output $O/dex $(find $O/jcls -name '*.class')
 $BT/aapt2 compile --dir res -o $O/res.zip
 $BT/aapt2 link -o $O/base.apk -I $SDK/platforms/android-35/android.jar --manifest AndroidManifest.xml $O/res.zip --min-sdk-version 26 --target-sdk-version 34
-(cd $O && zip -q -r base.apk lib && $BT/zipalign -f -P 16 4 base.apk aligned.apk)
+(cd $O/dex && zip -q ../base.apk classes.dex) && (cd $O && zip -q -r base.apk lib && $BT/zipalign -f -P 16 4 base.apk aligned.apk)
 KS=$A/debug.keystore; [ -f $KS ] || keytool -genkeypair -keystore $KS -storepass android -keypass android -alias dbg -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=debug" >/dev/null 2>&1
 $BT/apksigner sign --ks $KS --ks-pass pass:android --key-pass pass:android --out $O/bo1native.apk $O/aligned.apk
 echo "APK: $O/bo1native.apk"

@@ -6,6 +6,7 @@
 #include <android/looper.h>
 #include <android/window.h>
 #include <jni.h>
+#include "ime_android.h"
 #include <pthread.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -53,6 +54,8 @@ void H21_Key(int key) __attribute__((weak));
 void H21_Char(int c) __attribute__((weak));
 bool H21_Back() __attribute__((weak));
 bool H21_EditingName() __attribute__((weak));
+const char *H21_Name() __attribute__((weak)); int H21_NameMax() __attribute__((weak)); void H21_SetName(const char *) __attribute__((weak));   // OLA U2b: campo de texto de Android
+void H6_SavePipelines(const char *why) __attribute__((weak));   // OLA U2b: h6_loading.cpp, guarda la VkPipelineCache (la app sale con _exit)
 static bool g_menuMode = false;   // este proceso arranco en el menu principal (no en un mapa)
 static bool MenuOn() { return g_menuMode && &g_h21Running && g_h21Running && &H21_Touch; }
 static bool H10() { return &g_h10MenuOpen && &g_h10TouchFn && g_h10TouchFn; }
@@ -225,7 +228,7 @@ static void OnCmd(android_app *app, int32_t cmd)
     case APP_CMD_TERM_WINDOW: g_haveWin = false; if (g_engW) g9::SetWindow(nullptr); LOG("TERM_WINDOW"); break;
     case APP_CMD_WINDOW_RESIZED: case APP_CMD_CONTENT_RECT_CHANGED: case APP_CMD_CONFIG_CHANGED: ApplyOrientation(app); g_safeAt = NowMs() + 400; LOG("cambio de tamano/config cmd=%d", cmd); break;
     case APP_CMD_RESUME: case APP_CMD_START: g_resumed = true; break;
-    case APP_CMD_PAUSE: g_resumed = false; break;
+    case APP_CMD_PAUSE: g_resumed = false; if (&H6_SavePipelines) H6_SavePipelines("app en pausa"); break;   // OLA U2b: puede que no vuelva (la cierran desde recientes)
     }
 }
 // H4: controles provisionales de camara libre: mitad izquierda = joystick flotante (mover), mitad derecha = arrastrar para mirar;
@@ -431,6 +434,9 @@ static int32_t MenuInput(AInputEvent *ev)
     if (ty == AINPUT_EVENT_TYPE_KEY) {
         const int k = AKeyEvent_getKeyCode(ev), ac = AKeyEvent_getAction(ev);
         if (k == AKEYCODE_VOLUME_UP || k == AKEYCODE_VOLUME_DOWN || k == AKEYCODE_VOLUME_MUTE || k == AKEYCODE_POWER) return 0;   // del sistema
+        // OLA U2b: con el campo de texto de Android activo, borrar y las letras siguen hasta el (no se cuentan dos veces); el menu recibe el
+        // texto entero del campo en g_h21PollEvents. Sin el campo, como antes.
+        if (Ime_Active() && &H21_EditingName && H21_EditingName() && (k == AKEYCODE_DEL || k == AKEYCODE_FORWARD_DEL || KeyChar(k, AKeyEvent_getMetaState(ev)))) return 0;
         if (ac != AKEY_EVENT_ACTION_DOWN) return 1;
         const bool first = AKeyEvent_getRepeatCount(ev) == 0;
         switch (k) {
@@ -440,8 +446,8 @@ static int32_t MenuInput(AInputEvent *ev)
         case AKEYCODE_DPAD_LEFT: H21_Key(HK_LEFT); return 1; case AKEYCODE_DPAD_RIGHT: H21_Key(HK_RIGHT); return 1;
         case AKEYCODE_TAB: H21_Key(9); return 1;
         case AKEYCODE_ENTER: case AKEYCODE_NUMPAD_ENTER: case AKEYCODE_DPAD_CENTER: case AKEYCODE_BUTTON_A: case AKEYCODE_BUTTON_START: if (first) H21_Key(HK_ENTER); return 1;
-        case AKEYCODE_DEL: case AKEYCODE_FORWARD_DEL: H21_Key(HK_BACKSPACE); return 1;
         }
+        if (k == AKEYCODE_DEL || k == AKEYCODE_FORWARD_DEL) { H21_Key(HK_BACKSPACE); return 1; }
         const int c = KeyChar(k, AKeyEvent_getMetaState(ev));
         if (c && &H21_Char) { H21_Char(c); return 1; }
         return 1;
@@ -546,6 +552,7 @@ static void RestartApp()
 static void QuitToMenu() { LOG("salir de la partida -> menu principal"); unlink((g_playersDir + "/bo1_launch.txt").c_str()); RelaunchActivity(); }
 static void RelaunchActivity()
 {
+    if (&H6_SavePipelines) H6_SavePipelines("relanzar");   // OLA U2b: _exit no pasa por g9::Shutdown
     JavaVM *vm = g_app->activity->vm; JNIEnv *e; vm->AttachCurrentThread(&e, nullptr);
     jobject act = g_app->activity->clazz; jclass ca = e->GetObjectClass(act);
     jobject pm = e->CallObjectMethod(act, e->GetMethodID(ca, "getPackageManager", "()Landroid/content/pm/PackageManager;"));
@@ -557,7 +564,7 @@ static void RelaunchActivity()
         Exc(e); usleep(300000); _exit(0);
     }
 }
-static void QuitApp() { LOG("salir (menu)"); ANativeActivity_finish(g_app->activity); usleep(300000); _exit(0); }
+static void QuitApp() { LOG("salir (menu)"); if (&H6_SavePipelines) H6_SavePipelines("salir"); ANativeActivity_finish(g_app->activity); usleep(300000); _exit(0); }
 // pausa original -> Quit: con el menu principal en el build se vuelve a el (como el juego); sin el, se cierra la app como antes
 static void QuitFromGame() { if (&g_h21Running) QuitToMenu(); else QuitApp(); }
 static void CheckSurface(double now)
@@ -782,8 +789,19 @@ void android_main(android_app *app)
                 PumpEvents(!g_resumed || !g_haveWin);   // en segundo plano el menu se duerme en el looper
                 const double now = NowMs();
                 if (g_safeAt > 0 && now >= g_safeAt) { g_safeAt = 0; H10ReadSafe(g_app->activity); }
-                static bool kb = false; const bool want = &H21_EditingName && H21_EditingName();   // teclado en pantalla mientras se edita el nombre
-                if (want != kb) { kb = want; if (want) ANativeActivity_showSoftInput(g_app->activity, ANATIVEACTIVITY_SHOW_SOFT_INPUT_FORCED); else ANativeActivity_hideSoftInput(g_app->activity, 0); LOG("teclado en pantalla: %s", want ? "si" : "no"); }
+                // teclado en pantalla mientras se edita el nombre. OLA U2b: por el campo de texto Java (ime_android.cpp); el teclado escribe en el
+                // campo y aqui se copia su contenido al menu. "Listo" del teclado o cerrarlo terminan la edicion como Intro.
+                static bool kb = false; static int ser = -1; const bool want = &H21_EditingName && H21_EditingName();
+                if (want != kb) {
+                    kb = want;
+                    if (want) Ime_Show(g_app->activity, &H21_Name ? H21_Name() : "", &H21_NameMax ? H21_NameMax() : 16); else Ime_Hide(g_app->activity);
+                    LOG("teclado en pantalla: %s", want ? "si" : "no");
+                }
+                if (kb && Ime_Active()) {
+                    char t[64]; const int r = Ime_Poll(g_app->activity, t, sizeof t, &ser);
+                    if ((r & IME_TEXT) && &H21_SetName) H21_SetName(t);
+                    if (r & (IME_DONE | IME_CLOSED)) { LOG("teclado: %s, nombre '%s'", (r & IME_DONE) ? "Listo" : "cerrado por el usuario", &H21_Name ? H21_Name() : "?"); H21_Key(HK_ENTER); }
+                }
                 CheckSurface(now);
             };
             LOG("arranque: menu principal (h21)");
