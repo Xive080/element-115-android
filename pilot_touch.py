@@ -22,7 +22,7 @@
 import math, os, re, subprocess, sys, time
 
 SIM = os.environ.get("SIM") == "1"
-SER = os.environ.get("FOLD", "SERIAL_DEL_DISPOSITIVO")
+SER = os.environ.get("FOLD", "")
 PKG = "app.bo1native"
 MARGIN = int(os.environ.get("MARGIN_PX", "120")); MARGIN_TOP = int(os.environ.get("MARGIN_TOP_PX", "110")); MARGIN_BOT = int(os.environ.get("MARGIN_BOTTOM_PX", "170"))
 STALE_S = float(os.environ.get("STALE_S", "4")); STALL_S = float(os.environ.get("STALL_S", "12"))

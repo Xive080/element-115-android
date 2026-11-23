@@ -40,6 +40,16 @@ extern float g_h10SafeFrac[4] __attribute__((weak));                     // zona
 extern float g_h10Dpi __attribute__((weak));
 extern void (*g_h22PollEvents)() __attribute__((weak));   // OLA F3b: video de carga (h22_video.cpp): bombear eventos durante la carga
 void H22_VideoSkip() __attribute__((weak)); bool H22_VideoActive() __attribute__((weak));   // un toque o una tecla lo saltan
+// OLA U2: menu principal original (h21_menu.cpp). Debiles: sin H5G en el build no hay menu y la app entra directa al mapa como antes.
+extern void (*g_h21PollEvents)() __attribute__((weak));
+extern bool g_h21Running __attribute__((weak));
+void H21_Touch(int phase, float fx, float fy) __attribute__((weak));
+void H21_Key(int key) __attribute__((weak));
+void H21_Char(int c) __attribute__((weak));
+bool H21_Back() __attribute__((weak));
+bool H21_EditingName() __attribute__((weak));
+static bool g_menuMode = false;   // este proceso arranco en el menu principal (no en un mapa)
+static bool MenuOn() { return g_menuMode && &g_h21Running && g_h21Running && &H21_Touch; }
 static bool H10() { return &g_h10MenuOpen && &g_h10TouchFn && g_h10TouchFn; }
 static bool H10Open() { return H10() && g_h10MenuOpen; }
 
@@ -362,6 +372,75 @@ static bool H10TouchMotion(AInputEvent *ev, int act, int idx)
     }
     return true;
 }
+// ---- OLA U2: entrada del menu principal (h21_menu.cpp). Dedo: el primero que toca es el del menu (abajo / mover / arriba en fracciones
+// de la ventana, que en modo menu es la pantalla entera: sin capa DS). Teclas: Atras/B/Esc = atras (en GAME SETUP sale de la app),
+// cruceta y stick = flechas, A/Intro = elegir; letras, cifras y . _ ' ! - del teclado en pantalla o fisico para el nombre.
+static void QuitApp();
+static int g_h21Ptr = -1, g_h21PadDir = -1;
+enum { HK_ENTER = 0xD, HK_ESCAPE = 0x1B, HK_BACKSPACE = 0x7F, HK_UP = 0x9A, HK_DOWN = 0x9B, HK_LEFT = 0x9C, HK_RIGHT = 0x9D };   // ui/keycodes.h
+static int KeyChar(int k, int meta)
+{
+    const bool sh = (meta & AMETA_SHIFT_ON) != 0 || (meta & AMETA_CAPS_LOCK_ON) != 0;
+    if (k >= AKEYCODE_A && k <= AKEYCODE_Z) return (sh ? 'A' : 'a') + (k - AKEYCODE_A);
+    if (k == AKEYCODE_1 && (meta & AMETA_SHIFT_ON)) return '!';
+    if (k >= AKEYCODE_0 && k <= AKEYCODE_9) return '0' + (k - AKEYCODE_0);
+    switch (k) {
+    case AKEYCODE_SPACE: return ' '; case AKEYCODE_PERIOD: return '.'; case AKEYCODE_APOSTROPHE: return '\'';
+    case AKEYCODE_MINUS: return (meta & AMETA_SHIFT_ON) ? '_' : '-';
+    }
+    return 0;
+}
+static int32_t MenuInput(AInputEvent *ev)
+{
+    const int32_t ty = AInputEvent_getType(ev);
+    if (!MenuOn()) { g_h21Ptr = -1; if (ty == AINPUT_EVENT_TYPE_KEY && AKeyEvent_getKeyCode(ev) == AKEYCODE_BACK) return 1; return ty == AINPUT_EVENT_TYPE_MOTION; }
+    if (ty == AINPUT_EVENT_TYPE_MOTION) {
+        const int32_t src = AInputEvent_getSource(ev);
+        if ((src & AINPUT_SOURCE_JOYSTICK) == AINPUT_SOURCE_JOYSTICK || (src & AINPUT_SOURCE_GAMEPAD) == AINPUT_SOURCE_GAMEPAD) {
+            float x = AMotionEvent_getAxisValue(ev, AMOTION_EVENT_AXIS_HAT_X, 0), y = AMotionEvent_getAxisValue(ev, AMOTION_EVENT_AXIS_HAT_Y, 0);
+            if (fabsf(x) < 0.5f && fabsf(y) < 0.5f) { x = AMotionEvent_getAxisValue(ev, AMOTION_EVENT_AXIS_X, 0); y = AMotionEvent_getAxisValue(ev, AMOTION_EVENT_AXIS_Y, 0); }
+            int dir = -1; if (fabsf(y) >= fabsf(x)) { if (y < -0.6f) dir = HK_UP; else if (y > 0.6f) dir = HK_DOWN; } else { if (x < -0.6f) dir = HK_LEFT; else if (x > 0.6f) dir = HK_RIGHT; }
+            if (dir >= 0 && dir != g_h21PadDir) H21_Key(dir);
+            if (fabsf(x) < 0.3f && fabsf(y) < 0.3f) g_h21PadDir = -1; else if (dir >= 0) g_h21PadDir = dir;
+            return 1;
+        }
+        const int32_t a = AMotionEvent_getAction(ev); const int act = a & AMOTION_EVENT_ACTION_MASK, idx = (a & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+        const float gw = (float)(g_winW > 0 ? g_winW : 1), gh = (float)(g_winH > 0 ? g_winH : 1);
+        if (act == AMOTION_EVENT_ACTION_DOWN || act == AMOTION_EVENT_ACTION_POINTER_DOWN) {
+            if (g_h21Ptr >= 0) return 1;   // un solo dedo manda en el menu
+            g_h21Ptr = AMotionEvent_getPointerId(ev, idx); H21_Touch(0, AMotionEvent_getX(ev, idx) / gw, AMotionEvent_getY(ev, idx) / gh); return 1;
+        }
+        if (g_h21Ptr < 0) return 1;
+        for (size_t i = 0; i < AMotionEvent_getPointerCount(ev); ++i) {
+            if (AMotionEvent_getPointerId(ev, i) != g_h21Ptr) continue;
+            const float x = AMotionEvent_getX(ev, i) / gw, y = AMotionEvent_getY(ev, i) / gh;
+            if (act == AMOTION_EVENT_ACTION_MOVE) H21_Touch(1, x, y);
+            else if (act == AMOTION_EVENT_ACTION_CANCEL) { H21_Touch(2, -1, -1); g_h21Ptr = -1; }   // cancelado (gesto del sistema): fuera de toda zona, no activa nada
+            else if ((act == AMOTION_EVENT_ACTION_UP || act == AMOTION_EVENT_ACTION_POINTER_UP) && (int)i == idx) { H21_Touch(2, x, y); g_h21Ptr = -1; }
+            break;
+        }
+        return 1;
+    }
+    if (ty == AINPUT_EVENT_TYPE_KEY) {
+        const int k = AKeyEvent_getKeyCode(ev), ac = AKeyEvent_getAction(ev);
+        if (k == AKEYCODE_VOLUME_UP || k == AKEYCODE_VOLUME_DOWN || k == AKEYCODE_VOLUME_MUTE || k == AKEYCODE_POWER) return 0;   // del sistema
+        if (ac != AKEY_EVENT_ACTION_DOWN) return 1;
+        const bool first = AKeyEvent_getRepeatCount(ev) == 0;
+        switch (k) {
+        case AKEYCODE_BACK: case AKEYCODE_ESCAPE: case AKEYCODE_BUTTON_B:
+            if (first && !(&H21_Back && H21_Back())) { LOG("menu principal: Atras en GAME SETUP -> salir"); QuitApp(); } return 1;
+        case AKEYCODE_DPAD_UP: H21_Key(HK_UP); return 1; case AKEYCODE_DPAD_DOWN: H21_Key(HK_DOWN); return 1;
+        case AKEYCODE_DPAD_LEFT: H21_Key(HK_LEFT); return 1; case AKEYCODE_DPAD_RIGHT: H21_Key(HK_RIGHT); return 1;
+        case AKEYCODE_TAB: H21_Key(9); return 1;
+        case AKEYCODE_ENTER: case AKEYCODE_NUMPAD_ENTER: case AKEYCODE_DPAD_CENTER: case AKEYCODE_BUTTON_A: case AKEYCODE_BUTTON_START: if (first) H21_Key(HK_ENTER); return 1;
+        case AKEYCODE_DEL: case AKEYCODE_FORWARD_DEL: H21_Key(HK_BACKSPACE); return 1;
+        }
+        const int c = KeyChar(k, AKeyEvent_getMetaState(ev));
+        if (c && &H21_Char) { H21_Char(c); return 1; }
+        return 1;
+    }
+    return 0;
+}
 static int32_t OnInput(android_app *, AInputEvent *ev)
 {
     if (&H22_VideoActive && H22_VideoActive()) {   // OLA F3b: durante el video de carga la entrada solo sirve para saltarlo (como el original)
@@ -375,6 +454,7 @@ static int32_t OnInput(android_app *, AInputEvent *ev)
         }
         return 1;
     }
+    if (g_menuMode) return MenuInput(ev);   // OLA U2: menu principal (o su carga: la entrada se descarta hasta que este en pantalla)
     if (AInputEvent_getType(ev) == AINPUT_EVENT_TYPE_MOTION && H10PadMotion(ev)) return 1;
     if (AInputEvent_getType(ev) == AINPUT_EVENT_TYPE_MOTION) {
         int32_t a = AMotionEvent_getAction(ev); int act = a & AMOTION_EVENT_ACTION_MASK; int idx = (a & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
@@ -428,7 +508,26 @@ static const char *kMenus[] = { "popup_restart_warning", "popup_options", "popup
 static double g_t0, g_lastFrame, g_winStart, g_cpuStart, g_maxMs; static int g_frames; static int g_lastSW, g_lastSH; static double g_sizeChangedAt;
 const char *BO1App_Menu() { const char *m = getenv("BO1_MENU"); return m ? m : kMenus[0]; }
 // Reinicia el proceso (el motor no es reentrante): se relanza la actividad y se sale. Lo usan el cambio de aspecto y "otra partida".
+// OLA U2: players/bo1_launch.txt = "el proximo arranque entra directo al mapa" (un solo uso; lo escribe el menu al elegir mapa y la partida
+// al reiniciar el nivel, aplicar resolucion o girar). Sin el, la app arranca en el menu principal: asi Quit de la pausa y el fin de
+// partida vuelven al menu, y un cierre a mitad de carga tampoco deja la app atrapada en un mapa.
+static std::string g_playersDir;
+static void WriteLaunchMarker()
+{
+    if (g_playersDir.empty()) return;
+    mkdir(g_playersDir.c_str(), 0755);
+    const char *m = getenv("H5_MAP");
+    if (FILE *f = fopen((g_playersDir + "/bo1_launch.txt").c_str(), "w")) { fprintf(f, "%s
+", m ? m : "auto"); fclose(f); }
+}
+static void RelaunchActivity();
 static void RestartApp()
+{
+    if (!g_menuMode) WriteLaunchMarker();   // partida: el reinicio sigue en el mapa; menu: el propio menu deja el marcador al elegir
+    RelaunchActivity();
+}
+static void QuitToMenu() { LOG("salir de la partida -> menu principal"); unlink((g_playersDir + "/bo1_launch.txt").c_str()); RelaunchActivity(); }
+static void RelaunchActivity()
 {
     JavaVM *vm = g_app->activity->vm; JNIEnv *e; vm->AttachCurrentThread(&e, nullptr);
     jobject act = g_app->activity->clazz; jclass ca = e->GetObjectClass(act);
@@ -442,12 +541,15 @@ static void RestartApp()
     }
 }
 static void QuitApp() { LOG("salir (menu)"); ANativeActivity_finish(g_app->activity); usleep(300000); _exit(0); }
+// pausa original -> Quit: con el menu principal en el build se vuelve a el (como el juego); sin el, se cierra la app como antes
+static void QuitFromGame() { if (&g_h21Running) QuitToMenu(); else QuitApp(); }
 static void CheckSurface(double now)
 {
     // cambio de tamano/orientacion de la superficie: el backbuffer del motor se fija al arrancar y Present hace letterbox.
     // Si el aspecto ya no casa (>15 %) de forma sostenida, se reinicia el proceso para recalcular con el tamano nuevo.
     int sw = g9::SurfaceWidth(), sh = g9::SurfaceHeight();
     if (sw && (sw != g_lastSW || sh != g_lastSH)) { LOG("superficie %dx%d (motor %dx%d)", sw, sh, g_engW, g_engH); g_lastSW = sw; g_lastSH = sh; g_sizeChangedAt = now; }
+    if (sw && g_sizeChangedAt && g_menuMode && &H21_EditingName && H21_EditingName()) g_sizeChangedAt = now;   // OLA U2: el teclado en pantalla no reinicia
     if (sw && g_sizeChangedAt && now - g_sizeChangedAt > 800) {
         float ra = (float)sw / sh, re = (float)g_engW / g_engH; g_sizeChangedAt = 0;
         if (ra / re > 1.15f || re / ra > 1.15f) {
@@ -529,7 +631,7 @@ static void H5App_Input(H5PlayerInput *in, float dt)
     in->lookYaw += -g_lookDX * 0.12f * lookScale; in->lookPitch += g_lookDY * 0.12f * lookScale; g_lookDX = g_lookDY = 0;
     for (int i = 0; i < B_COUNT; ++i) if (g_btnMask >> i & 1) in->buttons |= kBtns[i].h5;
     const bool menuEdge = (g_btnMask >> B_MENU & 1) && !(g_prevMask >> B_MENU & 1);
-    if (menuEdge && H5P_GameOver && H5P_GameOver()) { LOG("fin de la partida: MENU -> otra partida (reinicio del proceso)"); RestartApp(); }
+    if (menuEdge && H5P_GameOver && H5P_GameOver()) { if (&g_h21Running) { LOG("fin de la partida: MENU -> menu principal"); QuitToMenu(); } else { LOG("fin de la partida: MENU -> otra partida (reinicio del proceso)"); RestartApp(); } }
     else if (menuEdge && &g_h10ToggleFn && g_h10ToggleFn) g_h10ToggleFn();   // OLA 10: el boton MENU abre/cierra la pausa original
     else if (&g_h5pPause && menuEdge) { g_h5pPause = !g_h5pPause; LOG("%s", g_h5pPause ? "PAUSA" : "sigue"); }
     if (g_safeAt > 0 && now >= g_safeAt) { g_safeAt = 0; H10ReadSafe(g_app->activity); }
@@ -632,7 +734,27 @@ void android_main(android_app *app)
         if (__system_property_get("debug.bo1.h10safe", prop) > 0 && prop[0]) setenv("H10_SAFE", prop, 1);
         g_h5pInputProvider = H5App_Input; g_h5pPostFrame = BO1App_PostFrame; g_h5pDrawTouch = H5App_DrawTouch;
         if (&g_h10RestartApp) g_h10RestartApp = RestartApp;   // OLA 10: reiniciar nivel / aplicar resolucion (el motor no es reentrante)
-        if (&g_h10QuitApp) g_h10QuitApp = QuitApp;
+        // OLA U2: menu principal original al abrir la app. Entra directo al mapa solo si el arranque anterior lo pidio (players/bo1_launch.txt,
+        // un solo uso) o si se fuerza un mapa (debug.bo1.map) o se apaga el menu (debug.bo1.h21=0, guiones de prueba de antes).
+        g_playersDir = gd + "/players";
+        const std::string mk = g_playersDir + "/bo1_launch.txt";
+        const bool launch = access(mk.c_str(), F_OK) == 0; if (launch) { char z[64] = ""; if (FILE *f = fopen(mk.c_str(), "r")) { if (fscanf(f, "%63s", z) != 1) z[0] = 0; fclose(f); } unlink(mk.c_str()); LOG("arranque: directo al mapa (%s, bo1_launch.txt)", z[0] ? z : "?"); }
+        const bool forced = __system_property_get("debug.bo1.map", prop) > 0 && prop[0];
+        const bool off = __system_property_get("debug.bo1.h21", prop) > 0 && prop[0] == '0';
+        g_menuMode = &g_h21PollEvents && !launch && !forced && !off;
+        if (g_menuMode) {
+            setenv("H21_MENU", "1", 1);
+            g_h21PollEvents = [] {
+                PumpEvents(!g_resumed || !g_haveWin);   // en segundo plano el menu se duerme en el looper
+                const double now = NowMs();
+                if (g_safeAt > 0 && now >= g_safeAt) { g_safeAt = 0; H10ReadSafe(g_app->activity); }
+                static bool kb = false; const bool want = &H21_EditingName && H21_EditingName();   // teclado en pantalla mientras se edita el nombre
+                if (want != kb) { kb = want; if (want) ANativeActivity_showSoftInput(g_app->activity, ANATIVEACTIVITY_SHOW_SOFT_INPUT_FORCED); else ANativeActivity_hideSoftInput(g_app->activity, 0); LOG("teclado en pantalla: %s", want ? "si" : "no"); }
+                CheckSurface(now);
+            };
+            LOG("arranque: menu principal (h21)");
+        }
+        if (&g_h10QuitApp) g_h10QuitApp = QuitFromGame;   // OLA U2: Quit de la pausa = volver al menu principal
     }
     if (__system_property_get("debug.bo1.glerr", prop) > 0 && prop[0] == '1') setenv("P4_GLDEBUG", "1", 1);
     LOG("datos: %s", gd.c_str());
@@ -640,6 +762,7 @@ void android_main(android_app *app)
     LOG("safe areas (px) L=%.0f T=%.0f R=%.0f B=%.0f", g_p5Safe[0], g_p5Safe[1], g_p5Safe[2], g_p5Safe[3]);
     g_winW = ANativeWindow_getWidth(app->window); g_winH = ANativeWindow_getHeight(app->window);
     g_ds = (g_winW < g_winH ? g_winW : g_winH) >= 1500 && g_winH > g_winW && g9::SetDsMode;   // interior (abierto) en vertical = formato DS
+    if (g_menuMode) g_ds = false;   // OLA U2: el menu principal usa la pantalla entera (sin capa de controles); el mapa vuelve a DS si toca
     if (__system_property_get("debug.bo1.ds", prop) > 0 && prop[0] == '0') g_ds = false;   // pruebas: pantalla completa con los botones sobre el juego
     if (g_ds) g9::SetDsMode(true);
     H10ReadSafe(app->activity);                               // OLA 10: zona segura de los menus (necesita g_winW/H y g_ds)

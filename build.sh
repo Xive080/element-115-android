@@ -27,5 +27,5 @@ $BT/aapt2 link -o $O/base.apk -I $SDK/platforms/android-35/android.jar --manifes
 KS=$A/debug.keystore; [ -f $KS ] || keytool -genkeypair -keystore $KS -storepass android -keypass android -alias dbg -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=debug" >/dev/null 2>&1
 $BT/apksigner sign --ks $KS --ks-pass pass:android --key-pass pass:android --out $O/bo1native.apk $O/aligned.apk
 echo "APK: $O/bo1native.apk"
-[ "$1" = install ] && adb -s ${FOLD:-SERIAL_DEL_DISPOSITIVO} install -r $O/bo1native.apk
+[ "$1" = install ] && adb -s ${FOLD:-} install -r $O/bo1native.apk
 exit 0
