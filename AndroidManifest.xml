@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="app.bo1native"
-    android:versionCode="3" android:versionName="0.2.1">
+    android:versionCode="4" android:versionName="0.2.2">
     <!-- OLA U2b: 0.2.1, teclado en pantalla por un EditText (classes.dex con app.bo1native.Ime; hasCode=true) y sin "Loading shaders" en el menu -->
     <!-- OLA U2: primera version con numero (las anteriores salian sin versionName/versionCode). Subirlos con cada APK que cambie de forma visible. -->
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
     <uses-feature android:glEsVersion="0x00030002" android:required="true" />
-    <application android:label="BO1 native" android:hasCode="true" android:extractNativeLibs="true" android:theme="@style/AppTheme">
+    <application android:label="Element 115" android:hasCode="true" android:extractNativeLibs="true" android:theme="@style/AppTheme">
         <activity android:name="android.app.NativeActivity" android:exported="true"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|density|uiMode|layoutDirection"
             android:screenOrientation="fullSensor" android:resizeableActivity="true"
