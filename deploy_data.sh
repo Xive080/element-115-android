@@ -58,7 +58,7 @@ if [ -n "$DRY" ]; then
   for e in "${L[@]}"; do printf '  %10d  %s -> %s\n' "$(SZ "${e%%|*}")" "${e%%|*}" "${e#*|}"; done
   echo "deploy_data: --dry-run (no se ha copiado nada). Para copiar: $0 --push [--cache] [--texpkg ...]"; exit 0
 fi
-FOLD=${FOLD:-$(sed -n 's/.*FOLD:-\([^}]*\)}.*/\1/p' "$HERE/fold.sh")}
+FOLD=${FOLD:-$(adb devices | awk '$2=="device"{print $1; exit}')}
 st=$(adb -s "$FOLD" get-state 2>/dev/null || true)
 [ "$st" = device ] || { echo "deploy_data: adb no ve $FOLD (estado '${st:-ninguno}'); conectalo y repite (no se fuerza la conexion)"; exit 2; }
 free=$(adb -s "$FOLD" shell df -k /sdcard | tail -1 | awk '{print $4}' | tr -d '\r')

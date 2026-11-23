@@ -1,2 +1,2 @@
 #!/bin/bash
-exec adb -s ${FOLD:-} "$@"
+exec adb ${FOLD:+-s $FOLD} "$@"

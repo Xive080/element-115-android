@@ -8,8 +8,8 @@
 # superficies FX, marcas, modelos FX y prepase floatz. Al final, tabla resumen.
 # Uso: long_test_fold.sh MINUTOS [etiqueta]        (FOLD = serie adb; PILOT=0 sin piloto; OLA 16: BO1ENV, SHOTEVERY=s y SHOTD=pantalla)
 cd "$(dirname "$0")"; MIN=${1:-15}; T=${2:-h7d_largo}; FOLD=${FOLD:-}
-if ! adb -s "$FOLD" get-state >/dev/null 2>&1; then f2=$(adb devices | awk '/SERIAL_DEL_DISPOSITIVO/ && $2=="device"{print $1; exit}'); [ -n "$f2" ] && FOLD=$f2; fi   # OLA 18: serie mDNS (adb-...-tls-connect); nunca se fuerza la conexion
-export FOLD; A="adb -s $FOLD"; O=out_fold/$T; mkdir -p $O; PASO=${PASO:-10}; W=$(awk -v m="$MIN" 'BEGIN{printf "%d", m * 60}')   # OLA 18: admite minutos con decimales (1.5)
+if ! adb -s "$FOLD" get-state >/dev/null 2>&1; then f2=$(adb devices | awk '$2=="device"{print $1; exit}'); [ -n "$f2" ] && FOLD=$f2; fi   # OLA 18: serie mDNS (adb-...-tls-connect); nunca se fuerza la conexion
+export FOLD; A="adb ${FOLD:+-s $FOLD}"; O=out_fold/$T; mkdir -p $O; PASO=${PASO:-10}; W=$(awk -v m="$MIN" 'BEGIN{printf "%d", m * 60}')   # OLA 18: admite minutos con decimales (1.5)
 $A shell true || { echo "ADB NO RESPONDE: no se lanza nada"; exit 2; }
 ST=$(ls -t ../h0/harness2/out_ndk*_h5/stubs.txt out/*/stubs.txt 2>/dev/null | head -1)   # antes de instalar: stubs sin libandroid/liblog
 [ -n "$ST" ] && grep -qE "^(A[A-Z][a-zA-Z]*_|__android_log)" "$ST" && { echo "stubs.txt ($ST) tiene simbolos de libandroid/liblog: no se lanza"; exit 4; }

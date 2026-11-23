@@ -4,7 +4,7 @@
 # OLA 16: AVAIL_MIN (3500) = MemAvailable minima para lanzar (las guardas de mon_kill_fold.sh y memguard no cambian); BO1ENV -> debug.bo1.env.
 # Guardas: mon_kill_fold.sh en segundo plano (Graphics>800 MB, Gpu>base+800 MB, MemAvailable<3000 MB -> force-stop) + memguard y V9_MAX_MB
 # dentro de la app. El log se FILTRA al vuelo (solo las etiquetas de la app) y se corta a 40 MB.
-cd "$(dirname "$0")"; F=${1:-1}; S=${2:-60}; T=${3:-h5_f$F}; A="adb -s ${FOLD:-}"; O=out_fold; mkdir -p $O
+cd "$(dirname "$0")"; F=${1:-1}; S=${2:-60}; T=${3:-h5_f$F}; A="adb ${FOLD:+-s $FOLD}"; O=out_fold; mkdir -p $O
 $A shell true || { echo "ADB NO RESPONDE"; exit 2; }
 av=$($A shell "grep MemAvailable /proc/meminfo" | awk '{print int($2/1024)}'); echo "MemAvailable antes: ${av} MB"; [ "${av:-0}" -lt ${AVAIL_MIN:-3500} ] && { echo "poca memoria libre: no se lanza"; exit 3; }
 $A shell am force-stop app.bo1native; sleep 1

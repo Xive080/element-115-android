@@ -6,7 +6,7 @@
 # debug.bo1.h12=1 enciende los registros [H12W]/[H12A]/[H12N] (tablones, anims y notetracks), [H8G] (estados de los 46 cristales)
 # y [H12GC] (fragmentos vivos/en movimiento tras una rotura). Al terminar se deja a 0.
 cd "$(dirname "$0")"
-T=${1:-h12}; O=out_fold; export FOLD=${FOLD:-}; A="adb -s $FOLD"
+T=${1:-h12}; O=out_fold; export FOLD=${FOLD:-}; A="adb ${FOLD:+-s $FOLD}"
 $A shell setprop debug.bo1.h12 1 || { echo "ADB NO RESPONDE"; exit 2; }
 # disparos: espera 25 s (carga del mapa) y toca FUEGO 25 s
 ( ./fire_taps.sh 25 25 "$O/tiros_$T" > "$O/taps_$T.log" 2>&1 ) &

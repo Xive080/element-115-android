@@ -9,7 +9,7 @@
 # Comprobar despues: capturas shot_<T>_*.png (zona segura, filas grandes, popup), y en el log:
 #   [H10] zona segura ... / tactil: filas x... / abre 'pausedmenu' / dedo ... item / valor suelto cambiado: perfil PERSONALIZADO / fps ...
 cd "$(dirname "$0")"
-T=${1:-h10t}; SAFE=$2; A="adb -s ${FOLD:-}"; O=out_fold; mkdir -p $O
+T=${1:-h10t}; SAFE=$2; A="adb ${FOLD:+-s $FOLD}"; O=out_fold; mkdir -p $O
 $A shell true || { echo "ADB NO RESPONDE"; exit 2; }
 $A shell setprop debug.bo1.h10 1; $A shell "setprop debug.bo1.h10safe '${SAFE}'"   # OLA 16: comillas dentro del shell remoto (" " se perdia y setprop fallaba)
 SHOT= ./run_h5_fold.sh 0 120 "$T" > $O/run_$T.txt 2>&1 &
