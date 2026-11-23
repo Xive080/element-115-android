@@ -12,6 +12,7 @@ It is an independent project and is not affiliated with or endorsed by the origi
 - `res/raw/avisos_terceros.txt`: licences of third-party libraries (libvpx, libopus).
 
 ## Related repositories
+- `element-115-backend`: backend, build glue, docs and the full layout (clone this repository into `native/nativeapp`).
 - `element-115`: engine / harness.
 - `element-115-zdec`: game-logic port.
 
