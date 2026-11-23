@@ -38,6 +38,8 @@ extern void (*g_h10RestartApp)() __attribute__((weak));
 extern void (*g_h10QuitApp)() __attribute__((weak));
 extern float g_h10SafeFrac[4] __attribute__((weak));                     // zona segura en fracciones de la zona de juego (izq, arriba, der, abajo)
 extern float g_h10Dpi __attribute__((weak));
+extern void (*g_h22PollEvents)() __attribute__((weak));   // OLA F3b: video de carga (h22_video.cpp): bombear eventos durante la carga
+void H22_VideoSkip() __attribute__((weak)); bool H22_VideoActive() __attribute__((weak));   // un toque o una tecla lo saltan
 static bool H10() { return &g_h10MenuOpen && &g_h10TouchFn && g_h10TouchFn; }
 static bool H10Open() { return H10() && g_h10MenuOpen; }
 
@@ -362,6 +364,17 @@ static bool H10TouchMotion(AInputEvent *ev, int act, int idx)
 }
 static int32_t OnInput(android_app *, AInputEvent *ev)
 {
+    if (&H22_VideoActive && H22_VideoActive()) {   // OLA F3b: durante el video de carga la entrada solo sirve para saltarlo (como el original)
+        const int32_t ty = AInputEvent_getType(ev);
+        if (ty == AINPUT_EVENT_TYPE_MOTION && (AMotionEvent_getAction(ev) & AMOTION_EVENT_ACTION_MASK) == AMOTION_EVENT_ACTION_DOWN
+            && (AInputEvent_getSource(ev) & AINPUT_SOURCE_TOUCHSCREEN) == AINPUT_SOURCE_TOUCHSCREEN) { LOG("video de carga: saltado con un toque"); H22_VideoSkip(); }
+        if (ty == AINPUT_EVENT_TYPE_KEY) {
+            const int k = AKeyEvent_getKeyCode(ev);
+            if (k == AKEYCODE_VOLUME_UP || k == AKEYCODE_VOLUME_DOWN || k == AKEYCODE_VOLUME_MUTE || k == AKEYCODE_POWER || k == AKEYCODE_WAKEUP || k == AKEYCODE_SLEEP) return 0;   // teclas del sistema: no saltan
+            if (AKeyEvent_getAction(ev) == AKEY_EVENT_ACTION_DOWN && AKeyEvent_getRepeatCount(ev) == 0 && k != AKEYCODE_BACK) { LOG("video de carga: saltado con la tecla %d", k); H22_VideoSkip(); }
+        }
+        return 1;
+    }
     if (AInputEvent_getType(ev) == AINPUT_EVENT_TYPE_MOTION && H10PadMotion(ev)) return 1;
     if (AInputEvent_getType(ev) == AINPUT_EVENT_TYPE_MOTION) {
         int32_t a = AMotionEvent_getAction(ev); int act = a & AMOTION_EVENT_ACTION_MASK; int idx = (a & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
@@ -639,6 +652,7 @@ void android_main(android_app *app)
     LOG("ventana %dx%d: arranca el motor", g_engW, g_engH);
     char probe[1024]; snprintf(probe, sizeof probe, "%s/zone/Common/code_pre_gfx_mp.ff", gd.c_str());
     if (access(probe, R_OK) != 0) { LOG("FALTAN DATOS: %s (adb push gamedata a %s)", probe, gd.c_str()); while (true) PumpEvents(true); }
+    if (&g_h22PollEvents) g_h22PollEvents = [] { PumpEvents(false); };   // OLA F3b: toques durante el video de carga
     int rc = bo1_engine_main(app->window, g_engW, g_engH);
     LOG("motor termino rc=%d", rc);
     _exit(rc);
