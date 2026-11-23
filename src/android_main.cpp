@@ -43,6 +43,11 @@ void H22_VideoSkip() __attribute__((weak)); bool H22_VideoActive() __attribute__
 // OLA U2: menu principal original (h21_menu.cpp). Debiles: sin H5G en el build no hay menu y la app entra directa al mapa como antes.
 extern void (*g_h21PollEvents)() __attribute__((weak));
 extern bool g_h21Running __attribute__((weak));
+// OLA U2: controles tactiles en partida (h23_touch.cpp, docs/DISENO_TACTIL.md) y Customize HUD. Pixeles de la ventana.
+void H23_SetWindow(int, int) __attribute__((weak)); void H23_Touch(int, int, float, float) __attribute__((weak));
+unsigned H23_Fill(H5PlayerInput *, float) __attribute__((weak)); void H23_Draw(int, int) __attribute__((weak));
+bool H23_Editing() __attribute__((weak)); void H23_EndEdit() __attribute__((weak)); bool H23_HitPause(float, float) __attribute__((weak));
+static bool g_h23;   // horizontal sin capa DS con la TU h23: sus controles sustituyen a los botones de la OLA 5/15E (debug.bo1.h23=0 los quita)
 void H21_Touch(int phase, float fx, float fy) __attribute__((weak));
 void H21_Key(int key) __attribute__((weak));
 void H21_Char(int c) __attribute__((weak));
@@ -357,9 +362,11 @@ static bool H10TouchMotion(AInputEvent *ev, int act, int idx)
     if (act == AMOTION_EVENT_ACTION_DOWN || act == AMOTION_EVENT_ACTION_POINTER_DOWN) {
         const float x = AMotionEvent_getX(ev, idx), y = AMotionEvent_getY(ev, idx);
         if (g_ds && y >= gh) return false;                                   // capa de controles
-        if (!g_ds) { float cx, cy, r; LandLayoutPx(B_MENU, &cx, &cy, &r); if (hypotf(x - cx, y - cy) < r * 1.35f) { if (&g_h10ToggleFn && g_h10ToggleFn) g_h10ToggleFn(); return true; } }
+        if (!g_ds) { float cx, cy, r; LandLayoutPx(B_MENU, &cx, &cy, &r);
+            if (g_h23 ? H23_HitPause(x, y) : hypotf(x - cx, y - cy) < r * 1.35f) { if (&g_h10ToggleFn && g_h10ToggleFn) g_h10ToggleFn(); return true; } }
         if (g_menuPtr >= 0) return true;
         for (auto &t : g_tp) t.on = false;                                     // nada se queda pulsado debajo del menu
+        if (g_h23) H23_Touch(0, 3, 0, 0);                                     // OLA U2: ni en los controles de h23
         g_menuPtr = AMotionEvent_getPointerId(ev, idx); g_h10TouchFn(0, x / gw, y / gh); return true;
     }
     if (g_menuPtr < 0) return false;
@@ -460,6 +467,13 @@ static int32_t OnInput(android_app *, AInputEvent *ev)
         int32_t a = AMotionEvent_getAction(ev); int act = a & AMOTION_EVENT_ACTION_MASK; int idx = (a & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
         float W = (float)(g_engW ? g_engW : 1);
         if (H10TouchMotion(ev, act, idx)) return 1;
+        if (g_h23) {   // OLA U2: controles tactiles de h23 (cada dedo por su id; cancelar = soltar todos)
+            if (act == AMOTION_EVENT_ACTION_DOWN || act == AMOTION_EVENT_ACTION_POINTER_DOWN) H23_Touch(AMotionEvent_getPointerId(ev, idx), 0, AMotionEvent_getX(ev, idx), AMotionEvent_getY(ev, idx));
+            else if (act == AMOTION_EVENT_ACTION_UP || act == AMOTION_EVENT_ACTION_POINTER_UP) H23_Touch(AMotionEvent_getPointerId(ev, idx), 2, AMotionEvent_getX(ev, idx), AMotionEvent_getY(ev, idx));
+            else if (act == AMOTION_EVENT_ACTION_CANCEL) H23_Touch(0, 3, 0, 0);
+            else if (act == AMOTION_EVENT_ACTION_MOVE) for (size_t i = 0; i < AMotionEvent_getPointerCount(ev); ++i) H23_Touch(AMotionEvent_getPointerId(ev, i), 1, AMotionEvent_getX(ev, i), AMotionEvent_getY(ev, i));
+            return 1;
+        }
         if (act == AMOTION_EVENT_ACTION_DOWN || act == AMOTION_EVENT_ACTION_POINTER_DOWN) {
             int id = AMotionEvent_getPointerId(ev, idx); if (id < 10) { TouchPtr &t = g_tp[id]; t.on = true; t.x0 = t.x = t.lx = AMotionEvent_getX(ev, idx); t.y0 = t.y = t.ly = AMotionEvent_getY(ev, idx); t.left = t.x0 < W * 0.5f; t.role = 0; t.btn = -1; if (g_ds) DsTouchDown(t); else if (g_h5Game) LandTouchDown(t); }
         } else if (act == AMOTION_EVENT_ACTION_UP || act == AMOTION_EVENT_ACTION_POINTER_UP || act == AMOTION_EVENT_ACTION_CANCEL) {
@@ -473,6 +487,10 @@ static int32_t OnInput(android_app *, AInputEvent *ev)
     }
     if (AInputEvent_getType(ev) == AINPUT_EVENT_TYPE_KEY) {
         int k = AKeyEvent_getKeyCode(ev), ac = AKeyEvent_getAction(ev);
+        if (g_h23 && H23_Editing()) {   // OLA U2: en Customize HUD, Atras / B / Esc = LISTO (guarda y vuelve a la pausa)
+            if ((k == AKEYCODE_BACK || k == AKEYCODE_BUTTON_B || k == AKEYCODE_ESCAPE) && ac == AKEY_EVENT_ACTION_DOWN && AKeyEvent_getRepeatCount(ev) == 0) H23_EndEdit();
+            if (k == AKEYCODE_BACK || k == AKEYCODE_BUTTON_B || k == AKEYCODE_ESCAPE) return 1;
+        }
         if (H10() && &g_h10PadFn && g_h10PadFn) {   // OLA 10: Atras del sistema y mando (A/B/START/cruceta) en los menus originales
             int b = -1;
             switch (k) {
@@ -517,8 +535,7 @@ static void WriteLaunchMarker()
     if (g_playersDir.empty()) return;
     mkdir(g_playersDir.c_str(), 0755);
     const char *m = getenv("H5_MAP");
-    if (FILE *f = fopen((g_playersDir + "/bo1_launch.txt").c_str(), "w")) { fprintf(f, "%s
-", m ? m : "auto"); fclose(f); }
+    if (FILE *f = fopen((g_playersDir + "/bo1_launch.txt").c_str(), "w")) { fprintf(f, "%s\n", m ? m : "auto"); fclose(f); }
 }
 static void RelaunchActivity();
 static void RestartApp()
@@ -613,6 +630,22 @@ static void H5App_Input(H5PlayerInput *in, float dt)
     if (g_lastFrame == 0) { g_lastFrame = g_winStart = now; g_cpuStart = CpuMs(); }
     memset(in, 0, sizeof *in);
     g_btnMask = 0; g_stickDX[0] = g_stickDY[0] = g_stickDX[1] = g_stickDY[1] = 0;
+    if (g_h23) {   // OLA U2: controles de h23 (pausa y marcador como el boton MENU / MARCADOR de antes)
+        H23_SetWindow(g_winW, g_winH);
+        const unsigned f = H23_Fill(in, dt);
+        if (f & 1) g_btnMask |= 1u << B_MENU;
+        if (f & 2) g_btnMask |= 1u << B_SCORES;
+        const unsigned keep = in->buttons;
+        const bool menuEdge = (g_btnMask >> B_MENU & 1) && !(g_prevMask >> B_MENU & 1);
+        if (menuEdge && H5P_GameOver && H5P_GameOver()) { if (&g_h21Running) { LOG("fin de la partida: pausa -> menu principal"); QuitToMenu(); } else RestartApp(); }
+        else if (menuEdge && &g_h10ToggleFn && g_h10ToggleFn) g_h10ToggleFn();
+        if (g_safeAt > 0 && now >= g_safeAt) { g_safeAt = 0; H10ReadSafe(g_app->activity); }
+        in->buttons = (&g_h5pPause && g_h5pPause) ? 0 : keep;
+        { static bool prevSc; const bool sc = (g_btnMask >> B_SCORES & 1) || g_padScores; if (sc != prevSc && &H13_ShowScores) H13_ShowScores(sc); prevSc = sc; }
+        g_prevMask = g_btnMask & (1u << B_MENU);   // el toque de pausa de h23 ya es un flanco: se suelta en el frame siguiente
+        CheckSurface(now); g_lastIn = now;
+        return;
+    }
     for (auto &t : g_tp) if (t.on && t.role == 3 && t.btn >= 0) g_btnMask |= 1u << t.btn;
     const bool ads = (g_btnMask >> B_ADS & 1) != 0; const float lookScale = ads ? 0.55f : 1.0f;   // apuntando, la vista gira mas despacio
     for (auto &t : g_tp) if (t.on && t.left) {   // analogico izquierdo (DS) o joystick flotante (horizontal) = moverse
@@ -648,6 +681,7 @@ static void H5App_Input(H5PlayerInput *in, float dt)
 // horizontal: botones translucidos dibujados con la lista 2D del HUD (el renderer original)
 static void H5App_DrawTouch(int W, int H)
 {
+    if (g_h23) { H23_Draw(W, H); return; }   // OLA U2
     if (g_ds || !H5P_DrawRect || !H5P_DrawLabel) return;
     const float sx = (float)W / g_winW, sy = (float)H / g_winH;
     for (int i = 0; i < B_COUNT; ++i) {
@@ -765,6 +799,9 @@ void android_main(android_app *app)
     if (g_menuMode) g_ds = false;   // OLA U2: el menu principal usa la pantalla entera (sin capa de controles); el mapa vuelve a DS si toca
     if (__system_property_get("debug.bo1.ds", prop) > 0 && prop[0] == '0') g_ds = false;   // pruebas: pantalla completa con los botones sobre el juego
     if (g_ds) g9::SetDsMode(true);
+    g_h23 = g_h5Game && !g_ds && &H23_Fill && !(__system_property_get("debug.bo1.h23", prop) > 0 && prop[0] == '0');
+    if (g_h5Game && !g_h23) setenv("H23", "0", 1);   // sin h23 (DS o apagado): la pestana CONTROLS vuelve a quitarse como antes
+    if (g_h23) { H23_SetWindow(g_winW, g_winH); LOG("controles tactiles h23 (Customize HUD en Options > Controls)"); }
     H10ReadSafe(app->activity);                               // OLA 10: zona segura de los menus (necesita g_winW/H y g_ds)
     if (&g_h13Batt) { pthread_t th; if (pthread_create(&th, nullptr, BattThread, nullptr) == 0) pthread_detach(th); }   // OLA 17: bateria para el HUD
     if (&g_h10Dpi) { const int d = AConfiguration_getDensity(app->config); g_h10Dpi = d > 0 && d < 0xfffe ? (float)d : 0; LOG("densidad %d dpi", d); }
